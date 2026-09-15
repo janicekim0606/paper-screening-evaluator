@@ -53,8 +53,8 @@ def call_llm(prompt, system_prompt="You are a helpful research assistant.", json
 
 def extract_json_from_text(text):
     """尝试从文本中提取 JSON"""
-    if not text:
-        return None
+    if not text or not isinstance(text, str):
+        raise InvalidResponseError("LLM JSON 响应为空或不是文本")
         
     try:
         # 如果返回的就是纯 JSON
@@ -67,7 +67,7 @@ def extract_json_from_text(text):
             json_str = text[start:end].strip()
             try:
                 return json.loads(json_str)
-            except:
+            except json.JSONDecodeError:
                 pass
         # 尝试查找 { ... }
         start = text.find("{")
@@ -75,6 +75,6 @@ def extract_json_from_text(text):
         if start != -1 and end != -1:
             try:
                 return json.loads(text[start:end])
-            except:
+            except json.JSONDecodeError:
                 pass
-        return None
+        raise InvalidResponseError("LLM 返回内容不是有效 JSON")

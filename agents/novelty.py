@@ -1,67 +1,52 @@
-import sys
 import os
-import json
+import sys
 
-# 添加父目录到 path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
+from prompts.novelty_prompts import KEYWORDS_EXTRACTION_PROMPT, NOVELTY_CHECK_PROMPT
 from tools.llm import call_llm, extract_json_from_text
 from tools.openalex import search_papers
-from prompts.novelty_prompts import KEYWORDS_EXTRACTION_PROMPT, NOVELTY_CHECK_PROMPT
 from errors import InvalidResponseError
 
+
 def check_novelty(item):
-    """
-    Step 1: 查重 Agent
-    """
+    """检索相似论文并返回结构化新颖性评估。"""
     title = item.get("Title", "")
     experiment = item.get("Experiment", "")
-    
     print(f"\n[Novelty Agent] Processing: {title[:50]}...")
-    
-    # 1. 提取关键词
+
     prompt_keywords = KEYWORDS_EXTRACTION_PROMPT.substitute(
         title=title,
-        experiment=experiment
+        experiment=experiment,
     )
-    
-    keywords_json = call_llm(prompt_keywords, json_mode=True)
-    keywords = extract_json_from_text(keywords_json)
-    
-    if not keywords or not isinstance(keywords, list):
-        keywords = [title] # Fallback
-        
-    print(f"  -> Keywords: {keywords}")
-    
-    # 2. 搜索论文 (使用前3个关键词组合，或者只用 Title)
-    # 为了提高召回率，我们构建一个查询字符串
-    query = " ".join(keywords[:3])
-    search_result = search_papers(query, limit=5)
-    papers = search_result.papers
+    keywords = extract_json_from_text(call_llm(prompt_keywords, json_mode=True))
+    if not isinstance(keywords, list) or not keywords:
+        raise InvalidResponseError("关键词提取结果必须是非空数组")
 
+    query = " ".join(str(keyword) for keyword in keywords[:3])
+    print(f"  -> Keywords: {keywords}")
+    search_result = search_papers(query, limit=config.OPENALEX_LIMIT)
+    papers = search_result.papers
     if not papers:
-        print("  -> OpenAlex search completed with no matching papers.")
-        
-    # 3. LLM 判决
-    papers_context = ""
-    for i, p in enumerate(papers):
-        papers_context += f"[{i+1}] {p['title']} ({p['publication_year']})\nAbstract: {p['abstract']}\n\n"
-        
+        print("  -> OpenAlex 检索成功但没有返回相似论文，无法据此确认新颖性。")
+
+    papers_context = "".join(
+        f"[{index}] {paper['title']} ({paper['publication_year']})\n"
+        f"Abstract: {paper['abstract']}\n\n"
+        for index, paper in enumerate(papers, start=1)
+    )
     prompt_check = NOVELTY_CHECK_PROMPT.substitute(
         title=title,
         experiment=experiment,
-        papers_context=papers_context
+        papers_context=papers_context,
     )
-    
-    result_json = call_llm(prompt_check, json_mode=True)
-    result = extract_json_from_text(result_json)
-    
-    if not result:
-        print(f"[Novelty] Error: Failed to parse JSON. Raw: {result_json}")
-        raise InvalidResponseError("新颖性评估返回了无效 JSON")
-    
+    result = extract_json_from_text(call_llm(prompt_check, json_mode=True))
+    if not isinstance(result, dict) or "novelty_score" not in result:
+        raise InvalidResponseError("新颖性评估结果缺少 novelty_score")
+
     return {
-        "novelty_score": result.get("novelty_score", 5),
-        "novelty_reason": result.get("reason", "Analysis failed"),
-        "similar_papers": papers
+        "novelty_score": result["novelty_score"],
+        "novelty_reason": result.get("reason", "未提供分析理由"),
+        "similar_papers": papers,
     }

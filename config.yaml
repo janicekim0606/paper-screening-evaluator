@@ -29,3 +29,9 @@ execution:
   max_items_to_process: 10  # 每次处理的最大题目数
   target_accepted_count: 3  # 最终生成的详细报告数量 (Top 3)
   save_rejected: true      # 必须开启以生成拒绝报告
+  input_path: "input/ideas.example.json"
+  output_path: "output"
+
+openalex:
+  limit: 5
+  from_year: 2020

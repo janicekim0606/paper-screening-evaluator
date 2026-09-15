@@ -2,6 +2,10 @@
 
 一个面向科研选题的自动化评估工具。项目结合 DeepSeek 与 OpenAlex，通过多阶段流程完成文献查重、研究价值评审、学术影响力预测、候选排序和报告生成。
 
+## English Summary
+
+An LLM-assisted research-idea screening pipeline that combines OpenAlex retrieval, structured evaluation prompts, configurable scoring, resumable runs, and Markdown report generation. It is a decision-support prototype, not an automated peer-review system.
+
 ## 功能
 
 - 基于 OpenAlex 检索相似论文并评估选题新颖性
@@ -18,6 +22,9 @@
 ├── input/                  # 脱敏示例输入
 ├── prompts/                # 提示词与报告模板
 ├── tools/                  # LLM、OpenAlex 与文件工具
+├── tests/                  # 无 API 离线测试
+├── examples/               # 脱敏静态示例输出
+├── docs/                   # 发布材料
 ├── config.py               # 配置加载
 ├── config.yaml             # 非敏感运行参数
 ├── main.py                 # 主程序
@@ -89,11 +96,54 @@ OPENALEX_EMAIL=your-email@example.com
 python main.py
 ```
 
+也可以从项目目录外指定输入和输出路径：
+
+```bash
+python main.py --input input/my_ideas.json --output output/run-01 --max-items 20 --top-n 3
+```
+
+使用 `--no-resume` 忽略已有断点，使用 `--no-save-rejected` 不生成拒绝报告。评分阈值可以用 `--novelty-threshold`、`--frontier-threshold`、`--utility-threshold`、`--efficiency-threshold` 和 `--impact-threshold` 覆盖。真实运行需要 DeepSeek API Key，并可能产生模型调用费用。
+
 结果会写入 `output/reports/` 和 `output/rejected/`。运行日志、断点文件和输出目录默认不纳入版本控制。
 
 ## 配置
 
 可在 `config.yaml` 中调整模型名称、评分门槛、维度权重、单次处理数量和最终入选数量。API 密钥只能通过 `.env` 或系统环境变量提供。
+
+## 架构
+
+```mermaid
+flowchart TD
+  A[JSON 输入] --> B[新颖性检查]
+  B --> C[OpenAlex 检索]
+  B --> D[多维评审]
+  D --> E[影响力预测]
+  E --> F[评分与排序]
+  F --> G[研究蓝图与汇总报告]
+```
+
+每个通过初筛的选题至少需要关键词提取、新颖性判断和综合评审调用；进入后续阶段的选题还会产生影响力预测和蓝图生成调用。实际费用取决于模型、输入长度、检索结果数量和通过率。
+
+## 测试
+
+测试不读取密钥，也不访问 DeepSeek 或 OpenAlex：
+
+```bash
+python -m compileall -q .
+python -m unittest discover -s tests -v
+```
+
+## 局限性
+
+- OpenAlex 的覆盖范围不完整，可能遗漏新论文、预印本和非英文研究。
+- LLM 评分不具备客观一致性，模型版本和提示词会影响排名。
+- 系统不是系统性文献综述，不能替代同行评议或学术判断。
+- 研究构想会发送给配置的模型服务商，使用前应检查其数据政策。
+- 不应直接依据系统输出决定论文投稿、课题立项或资金分配。
+
+## 项目状态
+
+这是一个用于展示 AI 应用工程能力的研究辅助原型。静态示例位于 `examples/`，不代表真实 API 运行结果。项目使用 MIT License，详见 `LICENSE`。
 
 ## 安全说明
 

@@ -12,3 +12,7 @@ class ExternalServiceError(EvaluatorError):
 
 class InvalidResponseError(EvaluatorError):
     """Raised when an API response is empty or malformed."""
+
+
+class InputValidationError(EvaluatorError):
+    """Raised when user-provided input does not match the expected schema."""

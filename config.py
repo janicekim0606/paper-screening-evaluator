@@ -26,6 +26,13 @@ def get_conf(path, default=None):
             return default
     return val if val is not None else default
 
+
+def set_runtime_overrides(overrides):
+    """应用命令行覆盖值，不修改敏感配置。"""
+    for name, value in overrides.items():
+        if value is not None:
+            globals()[name] = value
+
 # --- Configuration Variables ---
 
 # 密钥只允许通过环境变量提供，避免误提交到版本库。
@@ -56,6 +63,10 @@ WEIGHT_SI = float(get_conf("weights.scholarly_impact", 1.0))
 MAX_ITEMS_TO_PROCESS = int(get_conf("execution.max_items_to_process", 60))
 TARGET_ACCEPTED_COUNT = int(get_conf("execution.target_accepted_count", 3))
 SAVE_REJECTED = get_conf("execution.save_rejected", True)
+DEFAULT_INPUT_PATH = get_conf("execution.input_path", "input/ideas.example.json")
+DEFAULT_OUTPUT_PATH = get_conf("execution.output_path", "output")
+OPENALEX_LIMIT = int(get_conf("openalex.limit", 5))
+OPENALEX_FROM_YEAR = int(get_conf("openalex.from_year", 2020))
 
 # Validation
 if not DEEPSEEK_API_KEY:

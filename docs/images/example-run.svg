@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360">
+  <rect width="900" height="360" fill="#111827"/>
+  <text x="36" y="58" fill="#93c5fd" font-family="monospace" font-size="24">paper-screening-evaluator</text>
+  <text x="36" y="112" fill="#e5e7eb" font-family="monospace" font-size="18">[Data] Loaded 2 items</text>
+  <text x="36" y="150" fill="#e5e7eb" font-family="monospace" font-size="18">Phase 1: novelty and frontier screening</text>
+  <text x="36" y="188" fill="#e5e7eb" font-family="monospace" font-size="18">Phase 2: quality ranking</text>
+  <text x="36" y="226" fill="#86efac" font-family="monospace" font-size="18">accepted: 1  rejected: 1  failed: 0</text>
+  <text x="36" y="280" fill="#fcd34d" font-family="monospace" font-size="18">illustrative run; no external API call</text>
+</svg>

@@ -14,6 +14,7 @@ from errors import ExternalServiceError
 class SearchResult:
     papers: list[dict]
     query: str
+    status: str
 
 def init_openalex():
     """初始化 OpenAlex 配置"""
@@ -41,7 +42,7 @@ def search_papers(query, limit=5):
         results = (
             Works()
             .search(query)
-            .filter(from_publication_date="2020-01-01") # 仅搜索 2020 年以后的论文，保证时效性
+            .filter(from_publication_date=f"{config.OPENALEX_FROM_YEAR}-01-01")
             .get(return_meta=False, per_page=limit)
         )
         
@@ -74,7 +75,11 @@ def search_papers(query, limit=5):
                 "landing_page_url": work.get("landing_page_url")
             })
             
-        return SearchResult(papers=papers, query=query)
+        return SearchResult(
+            papers=papers,
+            query=query,
+            status="success" if papers else "no_results",
+        )
 
     except Exception as e:
         raise ExternalServiceError(f"OpenAlex 检索失败: {e}") from e

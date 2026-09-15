@@ -2,10 +2,14 @@ import os
 import sys
 import time
 import datetime
+import argparse
+import json
+import hashlib
+import math
 from pathlib import Path
 from tqdm import tqdm
 import config
-from tools.data import load_data, save_report
+from tools.data import load_data, sanitize_report_filename, save_report
 from agents.novelty import check_novelty
 from agents.critic import review_idea
 from agents.architect import generate_blueprint
@@ -15,25 +19,102 @@ from prompts.report_templates import (
     QUALITY_REJECTION_TEMPLATE, 
     FINAL_COMPARISON_TEMPLATE
 )
+from scoring import ScoreWeights, phase_one_score, phase_two_score, total_score as calculate_total_score
+from errors import InvalidResponseError
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_ROOT = PROJECT_ROOT / "output"
 STAGING_PATH = PROJECT_ROOT / "PHASE1_STAGING.json"
 PROGRESS_PATH = PROJECT_ROOT / "PROGRESS.log"
 
+
+def configure_output_encoding():
+    """让 Windows 控制台以 UTF-8 输出，并安全替换无法显示的字符。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+def input_fingerprint(input_path):
+    """返回输入文件的稳定指纹，用于隔离断点数据。"""
+    return {
+        "path": str(input_path.resolve()),
+        "sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
+    }
+
+
+def write_error_report(stage, title, error, index):
+    """记录单个选题的失败阶段和错误摘要。"""
+    error_dir = OUTPUT_ROOT / "errors"
+    error_dir.mkdir(parents=True, exist_ok=True)
+    (error_dir / f"{index + 1:03d}_{stage}.md").write_text(
+        f"# Evaluation Error\n\n- Stage: {stage}\n- Title: {title}\n"
+        f"- Error type: {type(error).__name__}\n- Error: {error}\n",
+        encoding="utf-8",
+    )
+
+
+def save_rejected_report(filename, content):
+    """按运行配置保存拒绝报告。"""
+    if config.SAVE_REJECTED:
+        save_report(filename, content, OUTPUT_ROOT / "rejected")
+
+
+def report_name(prefix, title):
+    """生成报告的完整逻辑标题，供保存和存在性检查共同使用。"""
+    return f"{prefix}_{title}"
+
+
+def parse_args():
+    """解析运行参数，命令行值覆盖配置文件。"""
+    parser = argparse.ArgumentParser(description="评估科研选题并生成研究报告")
+    parser.add_argument("--input", type=Path, default=PROJECT_ROOT / config.DEFAULT_INPUT_PATH)
+    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / config.DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--max-items", type=int, default=config.MAX_ITEMS_TO_PROCESS)
+    parser.add_argument("--top-n", type=int, default=config.TARGET_ACCEPTED_COUNT)
+    parser.add_argument("--novelty-threshold", type=float, default=None)
+    parser.add_argument("--frontier-threshold", type=float, default=None)
+    parser.add_argument("--utility-threshold", type=float, default=None)
+    parser.add_argument("--efficiency-threshold", type=float, default=None)
+    parser.add_argument("--impact-threshold", type=float, default=None)
+    parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--no-save-rejected", action="store_true")
+    return parser.parse_args()
+
 def main():
+    global OUTPUT_ROOT, STAGING_PATH, PROGRESS_PATH
+    configure_output_encoding()
+    args = parse_args()
+    OUTPUT_ROOT = args.output if args.output.is_absolute() else PROJECT_ROOT / args.output
+    STAGING_PATH = OUTPUT_ROOT / "PHASE1_STAGING.json"
+    PROGRESS_PATH = OUTPUT_ROOT / "PROGRESS.log"
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    if args.no_resume and STAGING_PATH.exists():
+        STAGING_PATH.unlink()
+
+    config.MAX_ITEMS_TO_PROCESS = max(0, args.max_items)
+    config.TARGET_ACCEPTED_COUNT = max(0, args.top_n)
+    config.set_runtime_overrides({
+        "THRESHOLD_NOVELTY": args.novelty_threshold,
+        "THRESHOLD_FRONTIER": args.frontier_threshold,
+        "THRESHOLD_UTILITY": args.utility_threshold,
+        "THRESHOLD_EFFICIENCY": args.efficiency_threshold,
+        "THRESHOLD_IMPACT": args.impact_threshold,
+    })
+    if args.no_save_rejected:
+        config.SAVE_REJECTED = False
+
     print("=== 自动化研究思路评估系统 (V2.0 专业版) ===")
     
     # 1. 加载数据
-    input_path = PROJECT_ROOT / "input" / "ideas.example.json"
+    input_path = args.input if args.input.is_absolute() else PROJECT_ROOT / args.input
     
     items = load_data(input_path)
     if not items:
         print("❌ 错误: 未能加载输入数据，请检查 input/输入.json 是否存在。")
         return
         
-    print(f"[Data] Loaded {len(items)} items from {input_path}")
-    
     # 2. 阶段 1: 初筛 (新颖性与前沿性)
     print(f"\n=== 阶段 1: 新颖性与前沿性初筛 (目标评分: {config.THRESHOLD_NOVELTY}) ===")
     
@@ -42,14 +123,18 @@ def main():
     
     staging_path = STAGING_PATH
     if staging_path.exists():
-        import json
         with open(staging_path, "r", encoding="utf-8") as f:
             staged_data = json.load(f)
-            pre_candidates = [d["data"] for d in staged_data]
-            processed_titles = [d["data"]["item"]["Title"] for d in staged_data]
-            # 这里还需要记录那些被拒绝的标题，以免重复处理
-            # 简单起见，我们检查文件是否存在
-            print(f"[Resume] Loaded {len(pre_candidates)} candidates and checking rejected files...")
+            if (
+                isinstance(staged_data, dict)
+                and staged_data.get("input") == input_fingerprint(input_path)
+                and isinstance(staged_data.get("candidates"), list)
+            ):
+                pre_candidates = staged_data["candidates"]
+                processed_titles = [d["item"]["Title"] for d in pre_candidates]
+                print(f"[Resume] Loaded {len(pre_candidates)} candidates and checking rejected files...")
+            else:
+                print("[Resume] Staging file does not match current input; starting fresh.")
 
     start_time = time.time()
     
@@ -61,9 +146,8 @@ def main():
         title = item.get("Title", "Untitled Idea")
         
         # 检查是否已在候选池或已拒绝
-        title_safe = "".join(x for x in title if x.isalnum() or x in " -_")[:50]
-        rej_file1 = OUTPUT_ROOT / "rejected" / f"REJECTED_PHASE1_NOVELTY_{title_safe}.md"
-        rej_file2 = OUTPUT_ROOT / "rejected" / f"REJECTED_PHASE1_FRONTIER_{title_safe}.md"
+        rej_file1 = OUTPUT_ROOT / "rejected" / f"{sanitize_report_filename(report_name('REJECTED_PHASE1_NOVELTY', title))}.md"
+        rej_file2 = OUTPUT_ROOT / "rejected" / f"{sanitize_report_filename(report_name('REJECTED_PHASE1_FRONTIER', title))}.md"
         
         if title in processed_titles or os.path.exists(rej_file1) or os.path.exists(rej_file2):
             # print(f"  ⏭️ 跳过已处理: {title[:20]}...")
@@ -73,7 +157,7 @@ def main():
         with PROGRESS_PATH.open("a", encoding="utf-8") as f:
             f.write(f"{datetime.datetime.now()}: Processing {idx+1}/{process_limit} - {title}\n")
             f.flush()
-        title_safe = "".join(x for x in title if x.isalnum() or x in " -_")[:50]
+        title_safe = title
         
         try:
             # Step 1.1: 新颖性与重复性检查
@@ -98,15 +182,18 @@ def main():
                     novelty_reason=reason,
                     similar_papers_list=papers_text if papers_text else "经 OpenAlex 查重未发现强相关论文，由于方法论过于传统被 AI 判定低分。"
                 )
-                save_report(f"REJECTED_PHASE1_NOVELTY_{title_safe}", rpt, OUTPUT_ROOT / "rejected")
+                save_rejected_report(report_name("REJECTED_PHASE1_NOVELTY", title_safe), rpt)
                 continue
 
             # Step 1.2: 学术前沿性专家初评
             critic_res = review_idea(item, novelty_res)
             # 加权计算初筛分 (重心在新颖度)
-            score_r1 = (critic_res['methodological_novelty'] * 0.6 + critic_res['frontier_alignment'] * 0.4)
+            score_r1 = phase_one_score(
+                critic_res['methodological_novelty'],
+                critic_res['frontier_alignment'],
+            )
             
-            if score_r1 < 7.0: # 硬性初选合格线
+            if score_r1 < config.THRESHOLD_FRONTIER:
                 print(f"  ❌ 拒绝: {title[:20]}... [前沿性分不足: {score_r1:.2f}]")
                 rpt = NOVELTY_REJECTION_TEMPLATE.substitute(
                     title=title,
@@ -117,7 +204,7 @@ def main():
                     novelty_reason=f"前沿评价: {critic_res.get('critique', '缺乏前瞻性研究价值')}",
                     similar_papers_list="通过了初步数据库查重，但在同行评议模型中被判定为学术路径常规，缺乏突破潜力。"
                 )
-                save_report(f"REJECTED_PHASE1_FRONTIER_{title_safe}", rpt, OUTPUT_ROOT / "rejected")
+                save_rejected_report(report_name("REJECTED_PHASE1_FRONTIER", title_safe), rpt)
                 continue
 
             # 通过初筛进入待定池
@@ -130,15 +217,20 @@ def main():
             pre_candidates.append(result_item)
             
             # 保存中间结果
-            import json
             with STAGING_PATH.open("w", encoding="utf-8") as f:
-                json.dump([{"idx": i, "data": p} for i, p in enumerate(pre_candidates)], f, ensure_ascii=False, indent=2)
+                json.dump(
+                    {"input": input_fingerprint(input_path), "candidates": pre_candidates},
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
             
             with PROGRESS_PATH.open("a", encoding="utf-8") as f:
                 f.write(f"{datetime.datetime.now()}: FINISHED {idx+1}/{process_limit}\n")
                 f.flush()
 
         except Exception as e:
+            write_error_report("phase1", title, e, idx)
             print(f"  ⚠️ 报错跳过: {title[:20]} | Error: {str(e)}")
             continue
 
@@ -153,34 +245,81 @@ def main():
         
         # New Agent Call: 学术影响力预测 (The 5th Dimension)
         # 注意: 这会增加 LLM 调用成本
-        impact_res = predict_impact(cand['item'], cand['novelty_res'], c)
+        try:
+            impact_res = predict_impact(cand['item'], cand['novelty_res'], c)
+        except Exception as error:
+            write_error_report("impact", cand['item']['Title'], error, idx)
+            print(f"  ⚠️ 影响力预测失败，跳过排名: {cand['item']['Title'][:30]}")
+            continue
         cand['impact_res'] = impact_res
         
-        # 提取影响力评分 (处理可能的解析错误或字段名差异)
-        # 优先读取 "总体潜力评分", 默认为THRESHOLD_IMPACT的基准分以免误杀
+        # 评分异常或未达门槛时进入失败记录，不伪装成刚好合格。
         try:
-            scholarly_impact = float(impact_res.get("总体潜力评分", config.THRESHOLD_IMPACT))
-        except (ValueError, TypeError):
-            scholarly_impact = config.THRESHOLD_IMPACT
+            scholarly_impact = float(impact_res["总体潜力评分"])
+        except (KeyError, ValueError, TypeError):
+            write_error_report(
+                "impact",
+                cand['item']['Title'],
+                InvalidResponseError("影响力评分不是有效数字"),
+                idx,
+            )
+            continue
+        if not math.isfinite(scholarly_impact) or not 0 <= scholarly_impact <= 10:
+            write_error_report(
+                "impact",
+                cand['item']['Title'],
+                InvalidResponseError("影响力评分超出 0-10 范围"),
+                idx,
+            )
+            continue
+
+        try:
+            execution_efficiency = float(c["execution_efficiency"])
+        except (KeyError, ValueError, TypeError):
+            write_error_report(
+                "quality",
+                cand['item']['Title'],
+                InvalidResponseError("执行效率评分不是有效数字"),
+                idx,
+            )
+            continue
+        if execution_efficiency < config.THRESHOLD_EFFICIENCY:
+            write_error_report(
+                "quality",
+                cand['item']['Title'],
+                InvalidResponseError("执行效率未达到配置门槛"),
+                idx,
+            )
+            continue
+        if scholarly_impact < config.THRESHOLD_IMPACT:
+            write_error_report(
+                "quality",
+                cand['item']['Title'],
+                InvalidResponseError("学术影响力未达到配置门槛"),
+                idx,
+            )
+            continue
             
         cand['scholarly_impact'] = scholarly_impact
 
         # 计算质量分 (侧重领域价值与落地性)
-        score_r2 = (c['domain_utility'] * 0.7 + c['execution_efficiency'] * 0.3)
+        score_r2 = phase_two_score(c['domain_utility'], c['execution_efficiency'])
         
         # 惩罚项：如果领域价值极低则直接应用惩罚
-        penalty = 0.7 if c['domain_utility'] < config.THRESHOLD_UTILITY else 1.0
-        
         # 综合加权总分 (按权重表，现在是 5 个维度)
-        total_score = (
-            c['methodological_novelty'] * config.WEIGHT_MN +
-            c['frontier_alignment'] * config.WEIGHT_FA +
-            c['domain_utility'] * config.WEIGHT_DU +
-            c['execution_efficiency'] * config.WEIGHT_EE +
-            scholarly_impact * config.WEIGHT_SI
-        ) * penalty
+        candidate_total_score = calculate_total_score(
+            {
+                'methodological_novelty': c['methodological_novelty'],
+                'frontier_alignment': c['frontier_alignment'],
+                'domain_utility': c['domain_utility'],
+                'execution_efficiency': c['execution_efficiency'],
+                'scholarly_impact': scholarly_impact,
+            },
+            ScoreWeights(config.WEIGHT_MN, config.WEIGHT_FA, config.WEIGHT_DU, config.WEIGHT_EE, config.WEIGHT_SI),
+            config.THRESHOLD_UTILITY,
+        )
         
-        cand['total_score'] = total_score
+        cand['total_score'] = candidate_total_score
         cand['score_r2'] = score_r2
         scored_candidates.append(cand)
 
@@ -190,7 +329,7 @@ def main():
     
     # 将淘汰的一半记录到 rejected
     for rj in scored_candidates[len(passed_candidates):]:
-        title_safe = "".join(x for x in rj['item']['Title'] if x.isalnum() or x in " -_")[:50]
+        title_safe = rj['item']['Title']
         rpt = QUALITY_REJECTION_TEMPLATE.substitute(
             title=rj['item']['Title'],
             title_description=rj['item']['Experiment'][:200] + "...",
@@ -206,7 +345,7 @@ def main():
             threshold_impact=config.THRESHOLD_IMPACT,
             critique=f"动态竞争结果：在当前批次对比中，由于横向对比分数({rj['score_r2']:.2f})未进入前50%被淘汰。{rj['critic_res'].get('critique')}"
         )
-        save_report(f"REJECTED_PHASE2_QUALITY_{title_safe}", rpt, OUTPUT_ROOT / "rejected")
+        save_rejected_report(report_name("REJECTED_PHASE2_QUALITY", title_safe), rpt)
 
     # 4. 阶段 3: 蓝图生成与报告保存
     print(f"\n=== 阶段 3: 最终优选与蓝图生成 (入围人数: {len(passed_candidates)}) ===")
@@ -215,14 +354,14 @@ def main():
     final_selection = passed_candidates[:config.TARGET_ACCEPTED_COUNT]
     
     for i, res in enumerate(final_selection):
-        title_safe = "".join(x for x in res['item']['Title'] if x.isalnum() or x in " -_")[:50]
+        title_safe = res['item']['Title']
         print(f"  ⭐ 选定 [Rank {i+1}]: {res['item']['Title'][:40]} | 总分: {res['total_score']:.2f}")
         
         res['critic_res']['total_score'] = res['total_score']
         res['critic_res']['scholarly_impact'] = res['scholarly_impact'] # 注入影响力分数以便 report 使用
         res['critic_res']['impact_analysis_full'] = res.get('impact_res', {}) # 注入完整影响力分析结果
         report = generate_blueprint(res['item'], res['novelty_res'], res['critic_res'])
-        save_report(f"ACCEPTED_RANK{i+1}_{title_safe}", report, OUTPUT_ROOT / "reports")
+        save_report(report_name(f"ACCEPTED_RANK{i+1}", title_safe), report, OUTPUT_ROOT / "reports")
 
     # 5. Top 3 汇总横向对比报告
     if len(final_selection) >= 2:

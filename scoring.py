@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True)
@@ -8,6 +9,16 @@ class ScoreWeights:
     domain_utility: float
     execution_efficiency: float
     scholarly_impact: float
+
+    @property
+    def total(self) -> float:
+        return (
+            self.methodological_novelty
+            + self.frontier_alignment
+            + self.domain_utility
+            + self.execution_efficiency
+            + self.scholarly_impact
+        )
 
 
 def phase_one_score(methodological_novelty: float, frontier_alignment: float) -> float:
@@ -19,6 +30,18 @@ def phase_two_score(domain_utility: float, execution_efficiency: float) -> float
 
 
 def total_score(scores: dict, weights: ScoreWeights, utility_threshold: float) -> float:
+    required = (
+        "methodological_novelty",
+        "frontier_alignment",
+        "domain_utility",
+        "execution_efficiency",
+        "scholarly_impact",
+    )
+    if any(key not in scores for key in required):
+        raise ValueError("all five score dimensions are required")
+    if weights.total <= 0 or not isfinite(weights.total):
+        raise ValueError("score weights must have a positive finite total")
+
     penalty = 0.7 if scores["domain_utility"] < utility_threshold else 1.0
     weighted = (
         scores["methodological_novelty"] * weights.methodological_novelty
