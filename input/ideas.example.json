@@ -1,0 +1,20 @@
+[
+  {
+    "Name": "robust_small_sample_classification",
+    "Title": "Robust Image Classification Under Limited Labels",
+    "Experiment": "Compare supervised learning, transfer learning, and consistency regularization under several labeled-data budgets. Report accuracy, calibration, robustness to distribution shift, and computational cost.",
+    "Interestingness": 8,
+    "Feasibility": 9,
+    "Novelty": 7,
+    "novel": true
+  },
+  {
+    "Name": "efficient_multimodal_fusion",
+    "Title": "Efficient Multimodal Fusion for Scientific Data",
+    "Experiment": "Evaluate early, late, and gated fusion for images and structured metadata. Include missing-modality tests, ablations, uncertainty calibration, and inference-cost comparisons.",
+    "Interestingness": 8,
+    "Feasibility": 8,
+    "Novelty": 7,
+    "novel": true
+  }
+]

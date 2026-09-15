@@ -1,0 +1,31 @@
+api:
+  deepseek_base_url: "https://api.deepseek.com"
+
+# LLM Model Settings
+llm:
+  model_name: "deepseek-chat"
+  temperature: 0.7
+  timeout: 120
+
+# Filtering Thresholds (0.0 - 10.0)
+# 只有高于这些分数的想法才能进入下一轮
+thresholds:
+  novelty: 7.0              # 第一阶段：新颖性门槛
+  frontier_alignment: 7.0   # 第一阶段：前沿契合度门槛
+  domain_utility: 7.5       # 第二阶段：领域应用价值门槛
+  execution_efficiency: 6.0 # 第二阶段：资源博弈可行性门槛
+  scholarly_impact: 6.5     # 学术影响力门槛
+
+# Scoring Weights (四维评价指标权重)
+weights:
+  methodological_novelty: 1.5
+  frontier_alignment: 1.5
+  domain_utility: 2.0
+  execution_efficiency: 1.0
+  scholarly_impact: 1.0
+
+# Execution Settings
+execution:
+  max_items_to_process: 10  # 每次处理的最大题目数
+  target_accepted_count: 3  # 最终生成的详细报告数量 (Top 3)
+  save_rejected: true      # 必须开启以生成拒绝报告
