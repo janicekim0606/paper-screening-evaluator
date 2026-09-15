@@ -2,10 +2,18 @@ import pyalex
 from pyalex import Works
 import sys
 import os
+from dataclasses import dataclass
 
 # 添加父目录到 path 以便导入 config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from errors import ExternalServiceError
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    papers: list[dict]
+    query: str
 
 def init_openalex():
     """初始化 OpenAlex 配置"""
@@ -66,8 +74,7 @@ def search_papers(query, limit=5):
                 "landing_page_url": work.get("landing_page_url")
             })
             
-        return papers
+        return SearchResult(papers=papers, query=query)
 
     except Exception as e:
-        print(f"[OpenAlex] Error searching papers: {e}")
-        return []
+        raise ExternalServiceError(f"OpenAlex 检索失败: {e}") from e

@@ -6,11 +6,12 @@ import json
 # 添加父目录到 path 以便导入 config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from errors import ConfigurationError, ExternalServiceError, InvalidResponseError
 
 def get_client():
     """获取 OpenAI 客户端 (配置为 DeepSeek)"""
     if not config.DEEPSEEK_API_KEY or "your-key" in config.DEEPSEEK_API_KEY:
-        raise ValueError("请通过 .env 或系统环境变量配置 DEEPSEEK_API_KEY")
+        raise ConfigurationError("请通过 .env 或系统环境变量配置 DEEPSEEK_API_KEY")
     
     return OpenAI(
         api_key=config.DEEPSEEK_API_KEY,
@@ -41,10 +42,14 @@ def call_llm(prompt, system_prompt="You are a helpful research assistant.", json
             max_tokens=4096,
             timeout=config.LLM_TIMEOUT
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise InvalidResponseError("LLM 返回了空响应")
+        return content
+    except InvalidResponseError:
+        raise
     except Exception as e:
-        print(f"[LLM] Error calling API: {e}")
-        return None
+        raise ExternalServiceError(f"LLM 请求失败: {e}") from e
 
 def extract_json_from_text(text):
     """尝试从文本中提取 JSON"""

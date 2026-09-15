@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from tools.llm import call_llm, extract_json_from_text
 from prompts.critic_prompts import CRITIC_REVIEW_PROMPT
+from errors import InvalidResponseError
 
 def review_idea(item, novelty_result):
     """
@@ -30,14 +31,7 @@ def review_idea(item, novelty_result):
     
     if not result:
         print(f"[Critic] Error: Failed to parse JSON. Raw: {result_json}")
-        return {
-            "methodological_novelty": methodological_novelty,
-            "frontier_alignment": 0,
-            "domain_utility": 0,
-            "execution_efficiency": 0,
-            "critique": "系统错误：LLM 未能生成有效的 JSON 响应。",
-            "decision": "REJECT"
-        }
+        raise InvalidResponseError("综合评审返回了无效 JSON")
     
     print(f"  -> Evaluation Result: MN={result.get('methodological_novelty')}, FA={result.get('frontier_alignment')}, DU={result.get('domain_utility')}, EE={result.get('execution_efficiency')}")
     return result

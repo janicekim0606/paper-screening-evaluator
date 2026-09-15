@@ -8,6 +8,7 @@ import config
 from tools.llm import call_llm, extract_json_from_text
 from tools.openalex import search_papers
 from prompts.novelty_prompts import KEYWORDS_EXTRACTION_PROMPT, NOVELTY_CHECK_PROMPT
+from errors import InvalidResponseError
 
 def check_novelty(item):
     """
@@ -35,15 +36,11 @@ def check_novelty(item):
     # 2. 搜索论文 (使用前3个关键词组合，或者只用 Title)
     # 为了提高召回率，我们构建一个查询字符串
     query = " ".join(keywords[:3])
-    papers = search_papers(query, limit=5)
-    
+    search_result = search_papers(query, limit=5)
+    papers = search_result.papers
+
     if not papers:
-        print("  -> No similar papers found (OpenAlex returned empty). Assuming Novel.")
-        return {
-            "novelty_score": 8,
-            "novelty_reason": "No similar papers found in search.",
-            "similar_papers": []
-        }
+        print("  -> OpenAlex search completed with no matching papers.")
         
     # 3. LLM 判决
     papers_context = ""
@@ -61,11 +58,7 @@ def check_novelty(item):
     
     if not result:
         print(f"[Novelty] Error: Failed to parse JSON. Raw: {result_json}")
-        return {
-            "novelty_score": 0,
-            "novelty_reason": "系统错误：LLM 未能生成有效的 JSON 响应。",
-            "similar_papers": []
-        }
+        raise InvalidResponseError("新颖性评估返回了无效 JSON")
     
     return {
         "novelty_score": result.get("novelty_score", 5),

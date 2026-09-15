@@ -6,8 +6,9 @@ from string import Template
 # 添加父目录到 path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.llm import call_llm
+from tools.llm import call_llm, extract_json_from_text
 from prompts.impact_prompts import IMPACT_PREDICTION_PROMPT
+from errors import InvalidResponseError
 
 def predict_impact(item, novelty_result, critic_result):
     """
@@ -32,11 +33,8 @@ def predict_impact(item, novelty_result, critic_result):
     
     impact_content = call_llm(prompt, json_mode=True)
     
-    try:
-        impact_result = json.loads(impact_content)
-        return impact_result
-    except json.JSONDecodeError:
-        print(f"Error decoding JSON from impact predictor for title: {title}")
-        # Fallback to return the raw string content if JSON parsing fails
-        return {"error": "Failed to parse JSON", "raw_content": impact_content}
+    impact_result = extract_json_from_text(impact_content)
+    if not isinstance(impact_result, dict):
+        raise InvalidResponseError(f"学术影响力预测返回了无效 JSON: {title}")
+    return impact_result
 
