@@ -61,6 +61,28 @@ def save_rejected_report(filename, content):
         save_report(filename, content, OUTPUT_ROOT / "rejected")
 
 
+def reject_quality_candidate(candidate, scholarly_impact, reason):
+    """为评分有效但未达质量门槛的选题生成正常拒绝报告。"""
+    item = candidate["item"]
+    critic = candidate["critic_res"]
+    report = QUALITY_REJECTION_TEMPLATE.substitute(
+        title=item["Title"],
+        title_description=item["Experiment"][:200] + "...",
+        methodological_novelty=critic["methodological_novelty"],
+        frontier_alignment=critic["frontier_alignment"],
+        domain_utility=critic["domain_utility"],
+        execution_efficiency=critic["execution_efficiency"],
+        scholarly_impact=f"{scholarly_impact:.1f}",
+        threshold_novelty=config.THRESHOLD_NOVELTY,
+        threshold_frontier=config.THRESHOLD_FRONTIER,
+        threshold_utility=config.THRESHOLD_UTILITY,
+        threshold_efficiency=config.THRESHOLD_EFFICIENCY,
+        threshold_impact=config.THRESHOLD_IMPACT,
+        critique=reason,
+    )
+    save_rejected_report(report_name("REJECTED_PHASE2_QUALITY", item["Title"]), report)
+
+
 def report_name(prefix, title):
     """生成报告的完整逻辑标题，供保存和存在性检查共同使用。"""
     return f"{prefix}_{title}"
@@ -284,19 +306,17 @@ def main():
             )
             continue
         if execution_efficiency < config.THRESHOLD_EFFICIENCY:
-            write_error_report(
-                "quality",
-                cand['item']['Title'],
-                InvalidResponseError("执行效率未达到配置门槛"),
-                idx,
+            reject_quality_candidate(
+                cand,
+                scholarly_impact,
+                f"执行效率评分 {execution_efficiency:.1f} 低于配置门槛 {config.THRESHOLD_EFFICIENCY:.1f}。",
             )
             continue
         if scholarly_impact < config.THRESHOLD_IMPACT:
-            write_error_report(
-                "quality",
-                cand['item']['Title'],
-                InvalidResponseError("学术影响力未达到配置门槛"),
-                idx,
+            reject_quality_candidate(
+                cand,
+                scholarly_impact,
+                f"学术影响力评分 {scholarly_impact:.1f} 低于配置门槛 {config.THRESHOLD_IMPACT:.1f}。",
             )
             continue
             
@@ -329,23 +349,12 @@ def main():
     
     # 将淘汰的一半记录到 rejected
     for rj in scored_candidates[len(passed_candidates):]:
-        title_safe = rj['item']['Title']
-        rpt = QUALITY_REJECTION_TEMPLATE.substitute(
-            title=rj['item']['Title'],
-            title_description=rj['item']['Experiment'][:200] + "...",
-            methodological_novelty=rj['critic_res']['methodological_novelty'],
-            frontier_alignment=rj['critic_res']['frontier_alignment'],
-            domain_utility=rj['critic_res']['domain_utility'],
-            execution_efficiency=rj['critic_res']['execution_efficiency'],
-            scholarly_impact=f"{rj.get('scholarly_impact', 0):.1f}",
-            threshold_novelty=config.THRESHOLD_NOVELTY,
-            threshold_frontier=config.THRESHOLD_FRONTIER,
-            threshold_utility=config.THRESHOLD_UTILITY,
-            threshold_efficiency=config.THRESHOLD_EFFICIENCY,
-            threshold_impact=config.THRESHOLD_IMPACT,
-            critique=f"动态竞争结果：在当前批次对比中，由于横向对比分数({rj['score_r2']:.2f})未进入前50%被淘汰。{rj['critic_res'].get('critique')}"
+        reject_quality_candidate(
+            rj,
+            rj.get("scholarly_impact", 0),
+            f"动态竞争结果：在当前批次对比中，由于横向对比分数({rj['score_r2']:.2f})未进入前50%被淘汰。"
+            f"{rj['critic_res'].get('critique')}",
         )
-        save_rejected_report(report_name("REJECTED_PHASE2_QUALITY", title_safe), rpt)
 
     # 4. 阶段 3: 蓝图生成与报告保存
     print(f"\n=== 阶段 3: 最终优选与蓝图生成 (入围人数: {len(passed_candidates)}) ===")

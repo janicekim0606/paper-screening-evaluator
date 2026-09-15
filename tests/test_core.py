@@ -205,8 +205,11 @@ class CoreTests(unittest.TestCase):
                 self.assertIn("选定 [Rank 1]", stdout)
                 rejected_name = sanitize_report_filename("REJECTED_PHASE1_NOVELTY_Rejected Idea")
                 self.assertTrue((output_path / "rejected" / f"{rejected_name}.md").exists())
-                self.assertTrue((output_path / "errors" / "001_quality.md").exists() or
-                                (output_path / "errors" / "002_quality.md").exists())
+                low_efficiency_name = sanitize_report_filename(
+                    "REJECTED_PHASE2_QUALITY_Low Efficiency Idea"
+                )
+                self.assertTrue((output_path / "rejected" / f"{low_efficiency_name}.md").exists())
+                self.assertFalse((output_path / "errors" / "001_quality.md").exists())
                 accepted_name = sanitize_report_filename("ACCEPTED_RANK1_Accepted Idea")
                 self.assertTrue((output_path / "reports" / f"{accepted_name}.md").exists())
         finally:
